@@ -196,6 +196,7 @@ src/g1_ros2_bridge/
 │   ├── state_bridge.py         # /joint_states + /imu/data
 │   ├── odom_bridge.py          # /odom + odom→base_link TF
 │   ├── cmd_vel_bridge.py       # /cmd_vel → LocoClient.Move (with watchdog)
+│   ├── loco_bridge.py          # /g1/loco/* services + topics → FSM / stand height
 │   └── realsense_publisher.py  # RealSense → /camera/{color,depth}/*
 ├── description/
 │   ├── urdf/g1_29dof.urdf      # bundled URDF (mesh refs use package://g1_ros2_bridge)

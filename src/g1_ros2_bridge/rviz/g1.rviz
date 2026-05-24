@@ -1,0 +1,103 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Color: 160; 160; 164
+      Plane: XY
+      Plane Cell Count: 20
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+      TF Prefix: ""
+      Visual Enabled: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+    - Class: rviz_default_plugins/Imu
+      Name: IMU
+      Enabled: true
+      Topic:
+        Value: /imu/data
+      acc_vector_alpha: 1
+      acc_vector_color: 255; 0; 0
+      acc_vector_scale: 0.1
+      box_alpha: 0.5
+      box_color: 255; 0; 255
+      enable_acc_vector: true
+      enable_axes: true
+      enable_box: false
+    - Class: rviz_default_plugins/Odometry
+      Name: Odometry
+      Enabled: true
+      Topic:
+        Value: /odom
+      Position Tolerance: 0.05
+      Angle Tolerance: 0.05
+      Keep: 100
+      Shape:
+        Alpha: 1
+        Color: 255; 25; 0
+        Head Length: 0.3
+        Head Radius: 0.1
+        Shaft Length: 1
+        Shaft Radius: 0.05
+        Value: Arrow
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Livox MID-360
+      Enabled: true
+      Topic:
+        Value: /utlidar/cloud_livox_mid360
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: Intensity
+      Channel Name: intensity
+      Use Fixed Frame: true
+      Decay Time: 0
+    - Class: rviz_default_plugins/Image
+      Name: Color
+      Enabled: false
+      Topic:
+        Value: /camera/color/image_raw
+    - Class: rviz_default_plugins/Image
+      Name: Depth
+      Enabled: false
+      Topic:
+        Value: /camera/depth/image_raw
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: odom
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 4
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.5
+      Name: Current View
+      Pitch: 0.4
+      Target Frame: <Fixed Frame>
+      Yaw: 0.8
+Window Geometry:
+  Height: 800
+  Width: 1280

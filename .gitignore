@@ -1,0 +1,57 @@
+# ROS 2 / colcon workspace
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+*.egg
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.cover
+
+# ROS 2 bags and recordings
+*.bag
+*.db3
+*.mcap
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.cipd
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env and secrets (network iface, API keys, etc.)
+.env
+.env.*
+!.env.example
+
+# AI / editor local settings
+.cursor/
+.claude/
+
+# Misc build / runtime artifacts
+compile_commands.json
+*.log
+*.tmp
+*.bak
