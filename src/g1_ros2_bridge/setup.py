@@ -16,6 +16,7 @@ setup(
         ('share/' + package_name + '/config', glob('config/*.yaml')),
         ('share/' + package_name + '/description/urdf', glob('description/urdf/*.urdf')),
         ('share/' + package_name + '/description/meshes', glob('description/meshes/*.STL')),
+        ('share/' + package_name + '/scripts', glob('scripts/*.sh')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -30,7 +31,6 @@ setup(
             'odom_bridge = g1_ros2_bridge.odom_bridge:main',
             'cmd_vel_bridge = g1_ros2_bridge.cmd_vel_bridge:main',
             'loco_bridge = g1_ros2_bridge.loco_bridge:main',
-            'realsense_publisher = g1_ros2_bridge.realsense_publisher:main',
         ],
     },
 )

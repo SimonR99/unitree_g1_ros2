@@ -18,8 +18,9 @@ declare (camera optical frames, `base_link → pelvis`).
 | pub       | `/odom`                          | `nav_msgs/Odometry`        | `rt/sportmodestate` position/velocity                    |
 | pub       | `/tf`                            | TF                         | `odom→base_link`, `pelvis→imu_link`                      |
 | pub       | `/tf_static`, `/robot_description` | TF + URDF                | `robot_state_publisher` over the bundled `g1_29dof.urdf` |
-| pub       | `/camera/color/image_raw` + info | `sensor_msgs/Image`        | on-board RealSense (optional)                            |
-| pub       | `/camera/depth/image_raw` + info | `sensor_msgs/Image`        | on-board RealSense (optional)                            |
+| pub       | `/camera/camera/color/image_raw` + info       | `sensor_msgs/Image`       | head-mounted RealSense D435 via `realsense2_camera` |
+| pub       | `/camera/camera/depth/image_rect_raw` + info  | `sensor_msgs/Image`       | head-mounted RealSense D435 via `realsense2_camera` |
+| pub       | `/camera/camera/depth/color/points`           | `sensor_msgs/PointCloud2` | colored depth cloud (when `pointcloud_enable:=true`)|
 | sub       | `/cmd_vel`                       | `geometry_msgs/Twist`      | → `LocoClient.Move(vx, vy, vyaw)`                        |
 | sub       | `/g1/enable`                     | `std_msgs/Bool`            | safety latch for `/cmd_vel` (optional)                   |
 | sub       | `/g1/loco/set_fsm_id`            | `std_msgs/Int32`           | → `LocoClient.SetFsmId(...)`                             |
@@ -37,7 +38,14 @@ that frame, so RViz can render the cloud as soon as the bridge is up.
 - The Unitree DDS stack set up per `../unitree_ros2/README.md` (cyclonedds, etc.)
 - `unitree_sdk2_python` installed and importable (already present in
   `../unitree_sdk2_python` — `pip install -e ../unitree_sdk2_python` if needed)
-- Optional for cameras: `pip install --user pyrealsense2`
+- For the head camera: Intel's official RealSense ROS package. Install once:
+
+  ```bash
+  sudo apt install ros-foxy-realsense2-camera ros-foxy-realsense2-camera-msgs ros-foxy-realsense2-description
+  ```
+
+  The launch transparently skips the camera node if the package isn't
+  installed (the bridges still come up), so the workspace builds either way.
 
 ## Build
 
@@ -58,20 +66,44 @@ export G1_INTERFACE=eth0   # or eno2, enp3s0, etc.
 
 ## Run
 
-### On the robot — bridges + URDF + TF (recommended)
+### On the robot — bridges + URDF + TF + camera (recommended)
 
 ```bash
 ros2 launch g1_ros2_bridge robot.launch.py
-# with the on-board RealSense:
-ros2 launch g1_ros2_bridge robot.launch.py enable_realsense:=true
-# safe dry-run (logs Twist but does not move the robot):
+# safe dry-run (logs Twist / FSM calls but does not move the robot):
 ros2 launch g1_ros2_bridge robot.launch.py dry_run:=true
+# pick a different depth profile / disable the colored pointcloud:
+ros2 launch g1_ros2_bridge robot.launch.py depth_profile:=640x480x30 pointcloud_enable:=false
+# skip the camera entirely (e.g. if the D435 isn't connected):
+ros2 launch g1_ros2_bridge robot.launch.py enable_camera:=false
 ```
 
-This brings up the three bridges (`state`, `odom`, `cmd_vel`),
-`robot_state_publisher` (with the bundled `g1_29dof.urdf`), and the static TFs
-that aren't expressed in the URDF (camera optical frames, `base_link → pelvis`).
-Anything else on the same `ROS_DOMAIN_ID` immediately sees a complete TF tree.
+This brings up the bridges (`state`, `odom`, `cmd_vel`, `loco`),
+`robot_state_publisher` (with the bundled `g1_29dof.urdf`), the static TF
+linking the robot root (`base_link → pelvis`), and Intel's
+`realsense2_camera` node on the head-mounted D435. Anything else on the
+same `ROS_DOMAIN_ID` immediately sees a complete TF tree plus standard
+`sensor_msgs/Image`/`sensor_msgs/PointCloud2` topics from the D435.
+
+#### Camera topics
+
+`realsense2_camera` publishes under `/camera/camera/...` (same names as
+g1pilot's Humble Docker setup):
+
+| Topic                                       | Type                       | Notes                          |
+|---------------------------------------------|----------------------------|--------------------------------|
+| `/camera/camera/color/image_raw`            | `sensor_msgs/Image`        | colour stream                  |
+| `/camera/camera/color/camera_info`          | `sensor_msgs/CameraInfo`   | colour intrinsics              |
+| `/camera/camera/depth/image_rect_raw`       | `sensor_msgs/Image`        | rectified depth                |
+| `/camera/camera/depth/camera_info`          | `sensor_msgs/CameraInfo`   | depth intrinsics               |
+| `/camera/camera/depth/color/points`         | `sensor_msgs/PointCloud2`  | only if `pointcloud_enable:=true` (default) |
+| `/camera/camera/extrinsics/depth_to_color`  | `realsense2_camera_msgs/Extrinsics` | static depth↔colour calibration |
+
+The camera node also broadcasts the `camera_link` → `camera_color_optical_frame`
+/ `camera_depth_optical_frame` TFs on `/tf_static`. Note that `camera_link` is
+**not** attached to anything in the bundled URDF — if you need it stamped
+onto the head, add `camera_link → d435_link` as a static TF in your own
+launch (it's robot-specific and we don't ship a hard-coded offset).
 
 ### On a laptop — visualization only
 
@@ -149,14 +181,30 @@ Every successful call is also echoed on `/g1/loco/last_command`
 
 ## Driving the robot
 
-Once the robot is in FSM 500 (see above):
+Full bring-up sequence on the robot (assumes `robot.launch.py` is up):
 
 ```bash
-# Arm the cmd_vel bridge:
+# 1. Stand from a lying / squatting pose:
+ros2 service call /g1_loco_bridge/lie_to_stand   std_srvs/srv/Trigger
+# or:
+ros2 service call /g1_loco_bridge/squat_to_stand std_srvs/srv/Trigger
+
+# 2. Enter balance / locomotion mode (FSM 500). /cmd_vel is ignored until this:
+ros2 service call /g1_loco_bridge/start std_srvs/srv/Trigger
+
+# 3. Arm the cmd_vel bridge (only needed when require_enable=true, which is the default):
 ros2 topic pub --once /g1/enable std_msgs/msg/Bool "{data: true}"
 
-# Drive it (keyboard or RViz):
+# 4. Drive it (keyboard or RViz / Nav2 / ...):
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
+```
+
+When you're done:
+
+```bash
+ros2 service call /g1_loco_bridge/stop_move std_srvs/srv/Trigger
+ros2 service call /g1_loco_bridge/sit       std_srvs/srv/Trigger
+ros2 service call /g1_loco_bridge/damp      std_srvs/srv/Trigger
 ```
 
 To disable: `data: false`, or stop publishing `/cmd_vel` (the 500 ms watchdog
@@ -179,12 +227,17 @@ odom                              ← odom_bridge
         ├── imu_link              ← state_bridge (per-tick)
         ├── imu_in_pelvis         ← URDF
         ├── torso_link            ← URDF
-        │   ├── d435_link         ← URDF
-        │   │   ├── camera_color_optical_frame  ← description.launch.py (static)
-        │   │   └── camera_depth_optical_frame  ← description.launch.py (static)
+        │   ├── d435_link         ← URDF (head mount point)
         │   └── mid360_link       ← URDF
         │       └── livox_frame   ← URDF
         └── (every leg / arm / hand link)       ← URDF
+
+# Plus the realsense2_camera tree on /tf_static (rooted at camera_link;
+# unparented from the URDF — add a static TF d435_link → camera_link in your
+# own launch if you need to fuse the camera with the rest of the robot):
+camera_link
+├── camera_color_frame  →  camera_color_optical_frame
+└── camera_depth_frame  →  camera_depth_optical_frame
 ```
 
 ## File layout
@@ -196,8 +249,7 @@ src/g1_ros2_bridge/
 │   ├── state_bridge.py         # /joint_states + /imu/data
 │   ├── odom_bridge.py          # /odom + odom→base_link TF
 │   ├── cmd_vel_bridge.py       # /cmd_vel → LocoClient.Move (with watchdog)
-│   ├── loco_bridge.py          # /g1/loco/* services + topics → FSM / stand height
-│   └── realsense_publisher.py  # RealSense → /camera/{color,depth}/*
+│   └── loco_bridge.py          # /g1/loco/* services + topics → FSM / stand height
 ├── description/
 │   ├── urdf/g1_29dof.urdf      # bundled URDF (mesh refs use package://g1_ros2_bridge)
 │   └── meshes/*.STL            # 35 meshes referenced by the URDF
@@ -265,15 +317,64 @@ only complete when **all** of the following are running:
 `enable_description:=false`, either flip it back on or run
 `description.launch.py` somewhere else on the same DDS network.
 
-### RViz: image topic visible but display is black / dropping
+### Stderr is full of `>>> rcutils_set_error_state ... <<<` blocks
 
-RealSense images use `camera_color_optical_frame` / `camera_depth_optical_frame`,
-which are **not** in the URDF — they're added as static TFs by
-`description.launch.py`. If you bypassed that launch you'll see the topic in
-`ros2 topic list` but RViz will silently drop every frame.
+The Unitree native cyclonedds publishers (`rt/lowstate`, `/api/...`,
+`/utlidar/...`, etc.) emit DDS discovery records whose string fields are
+not null-terminated, and `rmw_cyclonedds_cpp` complains every time it sees
+one. The error is harmless (every bridge still comes up and works), but it
+drowns out useful logs.
 
-If you only want to spot-check the stream without TF, use `rqt_image_view` —
-it doesn't require TF to render.
+Every node started by `robot.launch.py` / `description.launch.py` /
+`laptop.launch.py` is wrapped by `scripts/quiet_run.sh` which strips that
+specific spam from stderr while preserving everything else. Disable with
+`quiet:=false` if you need to see the raw output for debugging.
+
+### `cmd_vel` does nothing
+
+The `cmd_vel_bridge` log will tell you which step is missing — it logs
+`First /cmd_vel received ...` the moment a Twist arrives, and rate-limited
+`Got /cmd_vel but bridge is DISABLED` when the enable latch is off. Common
+causes:
+
+1. The robot isn't in FSM 500. Call `/g1_loco_bridge/start`.
+2. The enable latch isn't armed. Publish
+   `std_msgs/Bool {data: true}` on `/g1/enable`, or relaunch with
+   `require_enable:=false`.
+3. The robot's e-stop is engaged or it's in debug mode — `SetVelocity`
+   returns silently in those states. Release the e-stop.
+
+### `/camera/camera/color/image_raw` never appears
+
+Most common causes:
+
+1. `realsense2_camera` isn't installed.
+
+   ```bash
+   sudo apt install ros-foxy-realsense2-camera ros-foxy-realsense2-camera-msgs ros-foxy-realsense2-description
+   ```
+
+   The launch silently skips the camera include if the package is missing,
+   so the bridges still start without it — but you'll see no `/camera/...`
+   topics until you install it and relaunch.
+
+2. The D435 USB device is held by another process. The Unitree native
+   `/unitree/module/video_hub_pc4/videohub_pc4` opens `/dev/video4` on boot
+   to feed `/frontvideostream`, and in some firmware revisions that
+   exclusively locks the device. `realsense2_camera` then exits with
+   `RealSense error: Device or resource busy`. Stop the native service
+   (requires root):
+
+   ```bash
+   sudo systemctl stop unitree-upgrade   # or whatever supervises it
+   sudo pkill -9 videohub_pc4
+   ```
+
+3. Skip the camera if the D435 isn't physically connected:
+
+   ```bash
+   ros2 launch g1_ros2_bridge robot.launch.py enable_camera:=false
+   ```
 
 ## Related repos in this workspace
 

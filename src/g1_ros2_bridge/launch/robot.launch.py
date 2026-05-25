@@ -18,9 +18,19 @@ Args:
   enable_cmd_vel      Run the /cmd_vel -> LocoClient bridge (default: true)
   enable_loco         Run the FSM / standing service bridge (default: true)
   enable_description  Run robot_state_publisher + static TFs (default: true)
+  enable_camera       Launch the Intel `realsense2_camera` node for the
+                      head-mounted D435 (default: true). Publishes
+                      `/camera/camera/color/image_raw`,
+                      `/camera/camera/depth/image_rect_raw`,
+                      `/camera/camera/depth/color/points`, and the camera TFs.
+  depth_profile       D435 depth stream resolution / framerate
+                      (default: 1280x720x30)
+  pointcloud_enable   Publish the coloured pointcloud on
+                      `/camera/camera/depth/color/points` (default: true)
   require_enable      Require /g1/enable=true before cmd_vel passes through (default: true)
-  enable_realsense    Run the on-board RealSense publisher (default: false)
-  dry_run             cmd_vel_bridge logs but does not send to the robot (default: false)
+  dry_run             cmd_vel_bridge / loco_bridge log but do not send to the robot (default: false)
+  quiet               Filter the rmw_cyclonedds discovery noise from each
+                      node's stderr (default: true)
   urdf_path           Path to the G1 URDF (forwarded to description.launch.py;
                       defaults to the bundled `g1_29dof.urdf`)
 """
@@ -29,7 +39,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, EnvironmentVariable
@@ -37,43 +47,35 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
-def generate_launch_description():
+def _build_nodes(context, *args, **kwargs):
+    """Resolve LaunchConfigurations into concrete strings BEFORE constructing
+    Node actions. We do this so the `prefix=` (which doesn't accept
+    Substitutions in Foxy) can be set conditionally on `quiet`."""
     interface = LaunchConfiguration('interface')
     domain_id = LaunchConfiguration('domain_id')
     enable_odom = LaunchConfiguration('enable_odom')
     enable_cmd_vel = LaunchConfiguration('enable_cmd_vel')
     enable_loco = LaunchConfiguration('enable_loco')
     enable_description = LaunchConfiguration('enable_description')
+    enable_camera = LaunchConfiguration('enable_camera')
+    depth_profile = LaunchConfiguration('depth_profile')
+    pointcloud_enable = LaunchConfiguration('pointcloud_enable')
     require_enable = LaunchConfiguration('require_enable')
-    enable_realsense = LaunchConfiguration('enable_realsense')
     dry_run = LaunchConfiguration('dry_run')
+    quiet = LaunchConfiguration('quiet')
     urdf_path = LaunchConfiguration('urdf_path')
 
-    args = [
-        DeclareLaunchArgument('interface',
-            default_value=EnvironmentVariable('G1_INTERFACE', default_value=''),
-            description='Network interface for Unitree DDS (e.g. eth0, eno2)'),
-        DeclareLaunchArgument('domain_id', default_value='0'),
-        DeclareLaunchArgument('enable_odom', default_value='true'),
-        DeclareLaunchArgument('enable_cmd_vel', default_value='true'),
-        DeclareLaunchArgument('enable_loco', default_value='true',
-            description='Run the FSM / standing-mode service bridge'),
-        DeclareLaunchArgument('enable_description', default_value='true',
-            description='Run robot_state_publisher + static TFs on this host'),
-        DeclareLaunchArgument('require_enable', default_value='true'),
-        DeclareLaunchArgument('enable_realsense', default_value='false'),
-        DeclareLaunchArgument('dry_run', default_value='false'),
-        DeclareLaunchArgument('urdf_path',
-            default_value=os.path.join(
-                get_package_share_directory('g1_ros2_bridge'),
-                'description', 'urdf', 'g1_29dof.urdf')),
-    ]
+    pkg_share = get_package_share_directory('g1_ros2_bridge')
+    quiet_script = os.path.join(pkg_share, 'scripts', 'quiet_run.sh')
+    quiet_str = context.perform_substitution(quiet)
+    prefix = [quiet_script] if quiet_str.lower() in ('true', '1') else None
 
     state = Node(
         package='g1_ros2_bridge',
         executable='state_bridge',
         name='g1_state_bridge',
         output='screen',
+        prefix=prefix,
         parameters=[{
             'interface': interface,
             'domain_id': ParameterValue(domain_id, value_type=int),
@@ -86,6 +88,7 @@ def generate_launch_description():
         executable='odom_bridge',
         name='g1_odom_bridge',
         output='screen',
+        prefix=prefix,
         condition=IfCondition(enable_odom),
         parameters=[{
             'interface': interface,
@@ -99,6 +102,7 @@ def generate_launch_description():
         executable='cmd_vel_bridge',
         name='g1_cmd_vel_bridge',
         output='screen',
+        prefix=prefix,
         condition=IfCondition(enable_cmd_vel),
         parameters=[{
             'interface': interface,
@@ -113,6 +117,7 @@ def generate_launch_description():
         executable='loco_bridge',
         name='g1_loco_bridge',
         output='screen',
+        prefix=prefix,
         condition=IfCondition(enable_loco),
         parameters=[{
             'interface': interface,
@@ -121,21 +126,73 @@ def generate_launch_description():
         }],
     )
 
-    realsense = Node(
-        package='g1_ros2_bridge',
-        executable='realsense_publisher',
-        name='g1_realsense_publisher',
-        output='screen',
-        condition=IfCondition(enable_realsense),
-    )
+    # Published topics are
+    #   /camera/camera/color/image_raw         sensor_msgs/Image
+    #   /camera/camera/depth/image_rect_raw    sensor_msgs/Image
+    #   /camera/camera/depth/color/points      sensor_msgs/PointCloud2
+    # plus `/camera/camera/*/camera_info` and the camera_link → optical
+    # static TFs. Install with:
+    #   sudo apt install ros-foxy-realsense2-camera
+    realsense_share = None
+    try:
+        realsense_share = get_package_share_directory('realsense2_camera')
+    except Exception:
+        realsense_share = None
 
-    pkg_share = get_package_share_directory('g1_ros2_bridge')
+    camera_actions = []
+    if realsense_share is not None:
+        camera_actions.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(realsense_share, 'launch', 'rs_launch.py')),
+            condition=IfCondition(enable_camera),
+            launch_arguments={
+                'depth_module.depth_profile': depth_profile,
+                'pointcloud.enable': pointcloud_enable,
+            }.items(),
+        ))
+    # If realsense2_camera isn't installed yet, we silently skip the include;
+    # the rest of the bridges still come up. README explains the apt install.
+
     description_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'description.launch.py')),
         condition=IfCondition(enable_description),
         launch_arguments={
             'urdf_path': urdf_path,
+            'quiet': quiet,
         }.items(),
     )
 
-    return LaunchDescription(args + [state, odom, cmd_vel, loco, realsense, description_launch])
+    return [state, odom, cmd_vel, loco, *camera_actions, description_launch]
+
+
+def generate_launch_description():
+    pkg_share = get_package_share_directory('g1_ros2_bridge')
+    default_urdf = os.path.join(pkg_share, 'description', 'urdf', 'g1_29dof.urdf')
+
+    args = [
+        DeclareLaunchArgument('interface',
+            default_value=EnvironmentVariable('G1_INTERFACE', default_value=''),
+            description='Network interface for Unitree DDS (e.g. eth0, eno2)'),
+        DeclareLaunchArgument('domain_id', default_value='0'),
+        DeclareLaunchArgument('enable_odom', default_value='true'),
+        DeclareLaunchArgument('enable_cmd_vel', default_value='true'),
+        DeclareLaunchArgument('enable_loco', default_value='true',
+            description='Run the FSM / standing-mode service bridge'),
+        DeclareLaunchArgument('enable_description', default_value='true',
+            description='Run robot_state_publisher + static TFs on this host'),
+        DeclareLaunchArgument('enable_camera', default_value='true',
+            description='Launch realsense2_camera on the head-mounted D435 '
+                        '(needs ros-foxy-realsense2-camera installed)'),
+        DeclareLaunchArgument('depth_profile', default_value='1280x720x30',
+            description='RealSense depth profile (passed to rs_launch.py)'),
+        DeclareLaunchArgument('pointcloud_enable', default_value='true',
+            description='Publish /camera/camera/depth/color/points'),
+        DeclareLaunchArgument('require_enable', default_value='true'),
+        DeclareLaunchArgument('dry_run', default_value='false'),
+        DeclareLaunchArgument('quiet', default_value='true',
+            description='Filter rmw_cyclonedds discovery noise from each '
+                        "node's stderr"),
+        DeclareLaunchArgument('urdf_path', default_value=default_urdf),
+    ]
+
+    return LaunchDescription(args + [OpaqueFunction(function=_build_nodes)])

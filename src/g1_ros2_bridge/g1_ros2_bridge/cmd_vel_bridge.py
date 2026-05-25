@@ -61,6 +61,7 @@ class CmdVelBridge(Node):
         self.last_twist_t = self.get_clock().now()
         self.last_enable_t = self.get_clock().now()
         self.stopped = True
+        self._got_first_twist = False
 
         qos = QoSProfile(depth=10)
         self.create_subscription(Twist, '/cmd_vel', self._on_twist, qos)
@@ -72,6 +73,13 @@ class CmdVelBridge(Node):
             f"cmd_vel_bridge ready (require_enable={self.require_enable}, "
             f"max=[vx={self.max_vx}, vy={self.max_vy}, wz={self.max_wz}], "
             f"watchdog={self.watchdog_timeout_s}s)")
+        if self.require_enable:
+            self.get_logger().info(
+                "Waiting for /g1/enable=true. Bring-up: "
+                "(1) `ros2 service call /g1_loco_bridge/start std_srvs/srv/Trigger` "
+                "→ FSM 500. "
+                "(2) `ros2 topic pub --once /g1/enable std_msgs/msg/Bool '{data: true}'` "
+                "→ arm /cmd_vel.")
 
     @staticmethod
     def _clamp(v, lo, hi):
@@ -88,6 +96,12 @@ class CmdVelBridge(Node):
 
     def _on_twist(self, msg: Twist):
         self.last_twist_t = self.get_clock().now()
+        if not self._got_first_twist:
+            self._got_first_twist = True
+            self.get_logger().info(
+                f"First /cmd_vel received "
+                f"(vx={msg.linear.x:.3f}, vy={msg.linear.y:.3f}, vyaw={msg.angular.z:.3f}). "
+                f"enabled={self.enabled}")
         if not self.enabled:
             # Rate-limit this warning so it doesn't spam at 100 Hz publish rates.
             now = self.get_clock().now()

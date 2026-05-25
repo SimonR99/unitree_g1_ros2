@@ -13,10 +13,10 @@ but which the bridges and sensors rely on:
 
   - base_link -> pelvis        (URDF root is `pelvis`; odom_bridge gives
                                 `odom -> base_link`, so this closes the chain.)
-  - d435_link -> camera_color_optical_frame
-  - d435_link -> camera_depth_optical_frame
-                                (RealSense topics use the optical frames; the
-                                URDF only declares the `d435_link` body frame.)
+
+The camera optical frames (`camera_color_optical_frame`,
+`camera_depth_optical_frame`, …) are published by `realsense2_camera` itself
+when the camera node is up — we don't duplicate them here.
 
 Together with state_bridge (`pelvis -> imu_link`) and odom_bridge
 (`odom -> base_link`), this gives a full TF chain to every URDF link
@@ -26,6 +26,8 @@ ROS network runs this launch.
 Args:
   urdf_path     Path to the G1 URDF
                 (default: `share/g1_ros2_bridge/description/urdf/g1_29dof.urdf`)
+  quiet         Filter rmw_cyclonedds discovery noise from each child's
+                stderr (default: true)
 """
 
 import os
@@ -37,8 +39,14 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
-def _load_robot_description(context, urdf_path_sub):
-    urdf_path = context.perform_substitution(urdf_path_sub)
+def _build_nodes(context, *args, **kwargs):
+    pkg_share = get_package_share_directory('g1_ros2_bridge')
+    quiet_script = os.path.join(pkg_share, 'scripts', 'quiet_run.sh')
+
+    urdf_path = context.perform_substitution(LaunchConfiguration('urdf_path'))
+    quiet_str = context.perform_substitution(LaunchConfiguration('quiet'))
+    prefix = [quiet_script] if quiet_str.lower() in ('true', '1') else None
+
     if not os.path.isfile(urdf_path):
         raise RuntimeError(
             f"URDF not found at {urdf_path}. Pass urdf_path:=<file> on the "
@@ -46,25 +54,15 @@ def _load_robot_description(context, urdf_path_sub):
             f"in share/g1_ros2_bridge/description/urdf/.")
     with open(urdf_path, 'r') as f:
         urdf = f.read()
+
     rsp = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         name='robot_state_publisher',
         output='screen',
+        prefix=prefix,
         parameters=[{'robot_description': urdf}],
     )
-    return [rsp]
-
-
-def generate_launch_description():
-    pkg_share = get_package_share_directory('g1_ros2_bridge')
-    default_urdf = os.path.join(pkg_share, 'description', 'urdf', 'g1_29dof.urdf')
-
-    urdf_path = LaunchConfiguration('urdf_path')
-
-    args = [
-        DeclareLaunchArgument('urdf_path', default_value=default_urdf),
-    ]
 
     # URDF root link is `pelvis`; odom_bridge publishes `odom -> base_link`.
     # Glue the two with an identity static TF.
@@ -72,34 +70,21 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_link_to_pelvis_static_tf',
+        output='screen',
+        prefix=prefix,
         arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'pelvis'],
     )
 
-    # RealSense optical frames: rotate the camera body frame (X-forward, Y-left,
-    # Z-up per REP-103) into the optical convention (Z-forward, X-right, Y-down).
-    # Per realsense2_description: `rpy = (-pi/2, 0, -pi/2)`. tf2_ros
-    # static_transform_publisher takes "x y z yaw pitch roll", so:
-    #   roll = -pi/2, pitch = 0, yaw = -pi/2.
-    color_optical = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='d435_to_color_optical_static_tf',
-        arguments=['0', '0', '0',
-                   '-1.5707963267948966', '0', '-1.5707963267948966',
-                   'd435_link', 'camera_color_optical_frame'],
-    )
-    depth_optical = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='d435_to_depth_optical_static_tf',
-        arguments=['0', '0', '0',
-                   '-1.5707963267948966', '0', '-1.5707963267948966',
-                   'd435_link', 'camera_depth_optical_frame'],
-    )
+    return [rsp, base_to_pelvis]
 
-    return LaunchDescription(args + [
-        OpaqueFunction(function=_load_robot_description, args=[urdf_path]),
-        base_to_pelvis,
-        color_optical,
-        depth_optical,
-    ])
+
+def generate_launch_description():
+    pkg_share = get_package_share_directory('g1_ros2_bridge')
+    default_urdf = os.path.join(pkg_share, 'description', 'urdf', 'g1_29dof.urdf')
+
+    args = [
+        DeclareLaunchArgument('urdf_path', default_value=default_urdf),
+        DeclareLaunchArgument('quiet', default_value='true'),
+    ]
+
+    return LaunchDescription(args + [OpaqueFunction(function=_build_nodes)])

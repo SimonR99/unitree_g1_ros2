@@ -68,15 +68,25 @@ Visualization Manager:
       Use Fixed Frame: true
       Decay Time: 0
     - Class: rviz_default_plugins/Image
-      Name: Color
-      Enabled: false
+      Name: D435 Color
+      Enabled: true
       Topic:
-        Value: /camera/color/image_raw
+        Value: /camera/camera/color/image_raw
     - Class: rviz_default_plugins/Image
-      Name: Depth
+      Name: D435 Depth
       Enabled: false
       Topic:
-        Value: /camera/depth/image_raw
+        Value: /camera/camera/depth/image_rect_raw
+    - Class: rviz_default_plugins/PointCloud2
+      Name: D435 PointCloud
+      Enabled: false
+      Topic:
+        Value: /camera/camera/depth/color/points
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: RGB8
+      Use Fixed Frame: true
+      Decay Time: 0
   Global Options:
     Background Color: 48; 48; 48
     Fixed Frame: odom
