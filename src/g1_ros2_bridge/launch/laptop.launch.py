@@ -19,7 +19,6 @@ Args:
   rviz_config         Path to the RViz config (default: this package's `rviz/g1.rviz`)
   enable_description  Run robot_state_publisher + static TFs here (default: false)
   urdf_path           Path to the G1 URDF (forwarded to description.launch.py)
-  quiet               Filter rmw_cyclonedds discovery noise (default: true)
 """
 
 import os
@@ -42,7 +41,6 @@ def generate_launch_description():
     rviz_config = LaunchConfiguration('rviz_config')
     enable_description = LaunchConfiguration('enable_description')
     urdf_path = LaunchConfiguration('urdf_path')
-    quiet = LaunchConfiguration('quiet')
 
     args = [
         DeclareLaunchArgument('use_rviz', default_value='true'),
@@ -51,7 +49,6 @@ def generate_launch_description():
             description='Run robot_state_publisher + static TFs locally '
                         '(only needed if the robot does not)'),
         DeclareLaunchArgument('urdf_path', default_value=default_urdf),
-        DeclareLaunchArgument('quiet', default_value='true'),
     ]
 
     description_launch = IncludeLaunchDescription(
@@ -59,7 +56,6 @@ def generate_launch_description():
         condition=IfCondition(enable_description),
         launch_arguments={
             'urdf_path': urdf_path,
-            'quiet': quiet,
         }.items(),
     )
 

@@ -89,7 +89,7 @@ Visualization Manager:
       Decay Time: 0
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: odom
+    Fixed Frame: pelvis
     Frame Rate: 30
   Tools:
     - Class: rviz_default_plugins/MoveCamera

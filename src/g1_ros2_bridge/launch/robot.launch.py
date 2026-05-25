@@ -8,8 +8,7 @@ and subscribes /cmd_vel + /g1/enable.
 By default this launch ALSO runs `description.launch.py` (robot_state_publisher
 plus the static TFs not in the URDF), so the robot is the single source of
 truth for the TF tree. RViz on a laptop will then see a complete chain
-(`odom -> base_link -> pelvis -> ... -> livox_frame / camera_*`) without
-needing any local URDF.
+(`odom -> base_link -> pelvis -> ...`) without needing any local URDF.
 
 Args:
   interface           Network interface for Unitree DDS (default: $G1_INTERFACE)
@@ -18,19 +17,15 @@ Args:
   enable_cmd_vel      Run the /cmd_vel -> LocoClient bridge (default: true)
   enable_loco         Run the FSM / standing service bridge (default: true)
   enable_description  Run robot_state_publisher + static TFs (default: true)
-  enable_camera       Launch the Intel `realsense2_camera` node for the
-                      head-mounted D435 (default: true). Publishes
-                      `/camera/camera/color/image_raw`,
-                      `/camera/camera/depth/image_rect_raw`,
-                      `/camera/camera/depth/color/points`, and the camera TFs.
-  depth_profile       D435 depth stream resolution / framerate
-                      (default: 1280x720x30)
-  pointcloud_enable   Publish the coloured pointcloud on
-                      `/camera/camera/depth/color/points` (default: true)
+  enable_camera       Launch the Intel realsense2_camera node (default: true).
+                      Silently skipped if ros-foxy-realsense2-camera is not installed.
+                      Publishes /camera/camera/{color,depth} images and point cloud.
+  depth_profile       D435 depth stream resolution/framerate (default: 1280x720x30)
+  pointcloud_enable   Publish /camera/camera/depth/color/points (default: true)
   require_enable      Require /g1/enable=true before cmd_vel passes through (default: true)
   dry_run             cmd_vel_bridge / loco_bridge log but do not send to the robot (default: false)
   quiet               Filter the rmw_cyclonedds discovery noise from each
-                      node's stderr (default: true)
+                      bridge node's stderr (default: true)
   urdf_path           Path to the G1 URDF (forwarded to description.launch.py;
                       defaults to the bundled `g1_29dof.urdf`)
 """
@@ -126,13 +121,9 @@ def _build_nodes(context, *args, **kwargs):
         }],
     )
 
-    # Published topics are
-    #   /camera/camera/color/image_raw         sensor_msgs/Image
-    #   /camera/camera/depth/image_rect_raw    sensor_msgs/Image
-    #   /camera/camera/depth/color/points      sensor_msgs/PointCloud2
-    # plus `/camera/camera/*/camera_info` and the camera_link → optical
-    # static TFs. Install with:
-    #   sudo apt install ros-foxy-realsense2-camera
+    # realsense2_camera is an optional runtime dependency: if the package is not
+    # installed the camera section is silently skipped and the other bridges
+    # still come up. Install with: sudo apt install ros-foxy-realsense2-camera
     realsense_share = None
     try:
         realsense_share = get_package_share_directory('realsense2_camera')
@@ -150,15 +141,12 @@ def _build_nodes(context, *args, **kwargs):
                 'pointcloud.enable': pointcloud_enable,
             }.items(),
         ))
-    # If realsense2_camera isn't installed yet, we silently skip the include;
-    # the rest of the bridges still come up. README explains the apt install.
 
     description_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'description.launch.py')),
         condition=IfCondition(enable_description),
         launch_arguments={
             'urdf_path': urdf_path,
-            'quiet': quiet,
         }.items(),
     )
 
@@ -181,17 +169,16 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_description', default_value='true',
             description='Run robot_state_publisher + static TFs on this host'),
         DeclareLaunchArgument('enable_camera', default_value='true',
-            description='Launch realsense2_camera on the head-mounted D435 '
-                        '(needs ros-foxy-realsense2-camera installed)'),
+            description='Launch realsense2_camera (silently skipped if not installed)'),
         DeclareLaunchArgument('depth_profile', default_value='1280x720x30',
-            description='RealSense depth profile (passed to rs_launch.py)'),
+            description='RealSense depth stream profile (WxHxFPS)'),
         DeclareLaunchArgument('pointcloud_enable', default_value='true',
             description='Publish /camera/camera/depth/color/points'),
         DeclareLaunchArgument('require_enable', default_value='true'),
         DeclareLaunchArgument('dry_run', default_value='false'),
         DeclareLaunchArgument('quiet', default_value='true',
-            description='Filter rmw_cyclonedds discovery noise from each '
-                        "node's stderr"),
+            description='Filter rmw_cyclonedds discovery noise from bridge '
+                        "node stderr (state_bridge, odom_bridge, etc.)"),
         DeclareLaunchArgument('urdf_path', default_value=default_urdf),
     ]
 
